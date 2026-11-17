@@ -61,6 +61,12 @@ WEIGHT_STYLE_SIGNAL = 0.4
 # into the unsure band (see scoring.combine_signals).
 DISAGREEMENT_GAP = 0.45
 
+# The high-confidence AI label needs the model signal ON ITS OWN to be at least
+# this sure. Added after calibration: plain human-style prose scored style 0.99
+# and pushed a model score of 0.78 over the AI line. The style signal is too
+# easy to max out to be allowed to accuse anyone.
+MODEL_FLOOR_FOR_AI = 0.85
+
 # Inputs: anything shorter can't be scored meaningfully; anything longer is
 # refused rather than silently truncated.
 MIN_TEXT_CHARS = 40

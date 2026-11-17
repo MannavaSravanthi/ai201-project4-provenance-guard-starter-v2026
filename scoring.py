@@ -31,6 +31,10 @@ def combine_signals(model_score: float, style_score: float) -> float:
          The score is pulled into the unsure band. Two methods disagreeing
          IS uncertainty, and a writer should never be called AI on the
          strength of one signal alone.
+      3. Model floor: the score can only reach the AI band if model_score is
+         at least MODEL_FLOOR_FOR_AI (0.85). Otherwise it is capped just
+         under AI_THRESHOLD, landing in unsure. Style can never push text
+         into an accusation on its own.
     """
     score = (config.WEIGHT_MODEL_SIGNAL * model_score
              + config.WEIGHT_STYLE_SIGNAL * style_score)
@@ -38,6 +42,9 @@ def combine_signals(model_score: float, style_score: float) -> float:
     if abs(model_score - style_score) > config.DISAGREEMENT_GAP:
         score = min(max(score, config.HUMAN_THRESHOLD + 0.01),
                     config.AI_THRESHOLD - 0.01)
+
+    if score > config.AI_THRESHOLD and model_score < config.MODEL_FLOOR_FOR_AI:
+        score = config.AI_THRESHOLD - 0.01
 
     return round(min(max(score, 0.0), 1.0), 4)
 
