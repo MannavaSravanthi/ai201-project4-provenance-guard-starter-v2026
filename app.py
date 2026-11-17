@@ -30,6 +30,9 @@ from flask import Flask, jsonify, request
 
 import audit
 import config
+import detector
+import scoring
+import stylometry
 
 app = Flask(__name__)
 
@@ -155,91 +158,139 @@ def health():
 def submit():
     """
     Take a piece of text, decide about it, log the decision, answer.
-    ← TODO — Milestones 3, 4 and 5
 
-    Expects JSON:
-        {"text": "...", "creator_id": "..."}
+    In:  {"text": "...", "creator_id": "..."}
+    Out: {"content_id", "creator_id", "guess", "confidence", "label",
+          "model_score", "style_score", "status"}
 
-    Should return JSON with, at minimum:
-        {"content_id": "...", "guess": "...", "confidence": 0.0, "label": "...",
-         "model_score": 0.0, "style_score": 0.0}
-
-    ⚠️ **Both signal scores go in the response, not just the log.** Unit 8's
-    `run_attacks.py` and `run_eval.py` read `model_score` and `style_score`
-    straight off this response and put them in your reports. Leave them out and
-    every row of next unit's evidence says `null` — which is exactly the
-    diagnostic you need to name a stage and a mechanism. You do not want to
-    find that out after running the attack set.
-
-    ─────────────────────────────────────────────────────────────────────────
-    Build it in three passes. Do not skip ahead — the ordering is how you tell
-    a broken route from a broken signal.
-
-    **Milestone 3 — the route answers.**
-      1. Return a hardcoded response. Confirm `curl` gets it back before you
-         add any logic at all.
-      2. Then pull `text` and `creator_id` out of the payload.
-      3. Then call ONE signal — `detector.model_signal(text)` — and put the
-         real number in. Leave confidence and label as placeholders.
-      4. Log every submission with `audit.log_decision(...)`. The content_id
-         matters: `/appeal` needs it, and a student who skips it rebuilds this
-         whole flow later.
-
-    **Milestone 4 — the second signal and the score.**
-      5. Add `stylometry.style_signal(text)`.
-      6. Combine them with `scoring.combine_signals(...)`.
-      7. Log BOTH signal scores alongside the combined one, and put them in the
-         response too. Next unit you can't diagnose anything without them.
-
-    **Milestone 5 — the label.**
-      8. `scoring.score_to_label(...)` and put the real label in the response.
-
-    ─────────────────────────────────────────────────────────────────────────
-    Worth deciding early, because unit 8's attack set will decide it for you:
-    what should this do when `text` is missing, empty, or enormous? A crash on
-    a malformed input is one of the most common real failures there is.
+    Bad input (not JSON, missing/empty/too-short/too-long text, missing
+    creator_id) gets a 400 with a reason, and is logged as a rejection.
     """
-    payload = request.get_json(silent=True) or {}
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return _reject("unknown", "invalid_json",
+                       "Send a JSON object with 'text' and 'creator_id'.")
 
-    # TODO: delete this and build the route.
+    creator_id = payload.get("creator_id")
+    text = payload.get("text")
+
+    if not isinstance(creator_id, str) or not creator_id.strip():
+        return _reject("unknown", "missing_creator_id", "'creator_id' is required.")
+    if not isinstance(text, str) or not text.strip():
+        return _reject(creator_id, "missing_text", "'text' is required and can't be empty.")
+    text = text.strip()
+    if len(text) < config.MIN_TEXT_CHARS:
+        return _reject(creator_id, "text_too_short",
+                       f"Please submit at least {config.MIN_TEXT_CHARS} characters "
+                       "— a few sentences — so there's enough to look at.")
+    if len(text) > config.MAX_TEXT_CHARS:
+        return _reject(creator_id, "text_too_long",
+                       f"Please submit at most {config.MAX_TEXT_CHARS} characters.",
+                       text_length=len(text))
+
+    try:
+        model_score = detector.model_signal(text)
+    except ValueError as exc:      # detector says the text is too short to score
+        return _reject(creator_id, "text_too_short", str(exc))
+
+    style_score = stylometry.style_signal(text)
+    combined = scoring.combine_signals(model_score, style_score)
+    guess, label = scoring.score_to_label(combined)
+
+    content_id = uuid.uuid4().hex[:12]
+    audit.log_decision(
+        content_id=content_id,
+        creator_id=creator_id,
+        guess=guess,
+        model_score=model_score,
+        style_score=style_score,
+        combined_score=combined,
+        label=label,
+        status="decided",
+        text_length=len(text),
+    )
+
     return jsonify({
-        "error": "not_implemented",
-        "message": "POST /submit isn't built yet — see the TODO in app.py.",
-        "you_sent": {
-            "text_length": len(payload.get("text", "")),
-            "creator_id": payload.get("creator_id"),
-        },
-    }), 501
+        "content_id": content_id,
+        "creator_id": creator_id,
+        "guess": guess,
+        "confidence": combined,
+        "label": label,
+        "model_score": model_score,
+        "style_score": style_score,
+        "status": "decided",
+    })
+
+
+def _reject(creator_id, reason, message, **extra):
+    """Refuse a request with a 400, and leave a trace in the log."""
+    audit.log_rejection(creator_id=creator_id, reason=reason, **extra)
+    return jsonify({"error": reason, "message": message}), 400
 
 
 @app.post("/appeal")
 def appeal():
     """
-    A writer says you got it wrong. ← TODO — Milestone 5
+    A writer says we got it wrong.
 
-    Expects JSON:
-        {"content_id": "...", "reasoning": "..."}
+    In:  {"content_id": "...", "reasoning": "..."}
+    Out: {"content_id", "status": "under_review", "message", "original_guess"}
 
-    Should:
-      1. Check the content_id actually exists — `audit.entries_for(id)` tells
-         you. A typo here fails silently and looks like a broken endpoint,
-         which is the single most common way this milestone eats an hour.
-      2. Record the appeal with `audit.log_appeal(...)`, which moves the item
-         to `under_review`.
-      3. Confirm to the writer. No automatic re-checking needed.
-
-    This is the smallest endpoint in the project and the one that matters most
-    to the person on the other end. It's the only thing standing between a
-    wrong accusation and nothing at all.
+    Unknown content_id -> 404. Missing reasoning -> 400. Appealing an item
+    that's already under review is accepted and recorded again (the writer
+    may be adding information), and the status stays under_review.
     """
-    payload = request.get_json(silent=True) or {}
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "invalid_json",
+                        "message": "Send a JSON object with 'content_id' and 'reasoning'."}), 400
 
-    # TODO: delete this and build the route.
+    content_id = payload.get("content_id")
+    reasoning = payload.get("reasoning")
+
+    if not isinstance(content_id, str) or not content_id.strip():
+        return jsonify({"error": "missing_content_id",
+                        "message": "'content_id' is required."}), 400
+    if not isinstance(reasoning, str) or not reasoning.strip():
+        return jsonify({"error": "missing_reasoning",
+                        "message": "Tell us briefly why you think we got it wrong."}), 400
+
+    history = audit.entries_for(content_id.strip())
+    original = next((e for e in history if e.get("status") == "decided"), None)
+    if original is None:
+        return jsonify({"error": "unknown_content_id",
+                        "message": f"No submission found with id '{content_id}'."}), 404
+
+    audit.log_appeal(
+        content_id=original["content_id"],
+        creator_id=original["creator_id"],
+        reasoning=reasoning.strip(),
+    )
+
     return jsonify({
-        "error": "not_implemented",
-        "message": "POST /appeal isn't built yet — see the TODO in app.py.",
-        "you_sent": payload,
-    }), 501
+        "content_id": original["content_id"],
+        "status": "under_review",
+        "original_guess": original.get("guess"),
+        "message": "Thanks — your appeal is recorded. A person will review this "
+                   "piece, and the label won't be held against you in the meantime.",
+    })
+
+
+@app.get("/content/<content_id>")
+def get_content(content_id):
+    """Stretch: one item's current status (the latest entry wins)."""
+    history = audit.entries_for(content_id)
+    if not history:
+        return jsonify({"error": "unknown_content_id"}), 404
+    decision = next((e for e in history if e.get("status") == "decided"), {})
+    return jsonify({
+        "content_id": content_id,
+        "status": history[-1].get("status"),
+        "guess": decision.get("guess"),
+        "confidence": decision.get("combined_score"),
+        "label": decision.get("label"),
+        "appeals": [e for e in history if e.get("event") == "appeal"],
+    })
 
 
 # ── Already works ─────────────────────────────────────────────────────────────
