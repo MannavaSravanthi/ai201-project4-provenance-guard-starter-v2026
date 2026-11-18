@@ -251,23 +251,103 @@ Each `429` is also written to the audit log by the starter's 429 handler:
 
 ## Attack Run — Before
 
-<!-- Every attack with its outcome and a held-or-broke mark.
-     `run_attacks.py --label before` produces the table. -->
+`python run_attacks.py --set attack_set --label before`, giving `results/attack_run_2026-11-17_2141_before.md`. 56 attacks, 0 crashes, 0 5xx responses.
 
+**How I marked them.** *Evasion* and *prompt-injection* rows built on AI text are **BROKE** if the AI text didn't get the high-confidence AI label. "Unsure" counts as getting through, because only the AI label stops anything. *False-positive* rows are **BROKE** if real human writing got the AI label. *Malformed* rows are **HELD** if refused cleanly (400) and **BROKE** if junk got a verdict. *Flood* rows are **HELD** if the limiter stepped in once the creator passed 10 a minute.
 
+| Family | Held | Broke |
+|---|---|---|
+| evasion | 1 | 9 |
+| false_positive | 7 | 1 |
+| prompt_injection | 3 | 3 |
+| malformed | 17 | 3 |
+| flood_same_creator | 12 | 0 |
+| **Total** | **40** | **16** |
+
+| ID | Family | Targeting | Status | Guess | Score | model | style | Verdict | Note |
+|---|---|---|---|---|---|---|---|---|---|
+| EV01 | evasion | signal two: typos raise word variety | 200 | unsure | 0.378 | 0.164 | 0.700 | **BROKE** | AI text not labelled AI. Typos sent signal one to 0.16; style stayed 0.70 |
+| EV02 | evasion | signal two: broken-up sentences raise length spread | 200 | unsure | 0.394 | 0.594 | 0.095 | **BROKE** | AI text landed unsure; style fell to 0.09 |
+| EV03 | evasion | signal two: a pasted quotation changes the shape | 200 | unsure | 0.520 | 0.666 | 0.301 | **BROKE** | AI text landed unsure |
+| EV04 | evasion | signal one: unusual words raise perplexity | 200 | unsure | 0.647 | 0.611 | 0.700 | **BROKE** | unusual words cut model to 0.61; unsure |
+| EV05 | evasion | both signals: heavy human editing pass | 200 | human | 0.277 | 0.321 | 0.210 | **BROKE** | labelled human outright; both signals fooled |
+| EV06 | evasion | signal two: one very long sentence and one very short | 200 | unsure | 0.445 | 0.573 | 0.252 | **BROKE** | AI text landed unsure; style 0.25 |
+| EV07 | evasion | signal two: padding with punctuation | 200 | unsure | 0.360 | 0.586 | 0.017 | **BROKE** | punctuation padding drove style to 0.02; unsure |
+| EV08 | evasion | signal one: text below the token window | 200 | unsure | 0.412 | 0.245 | 0.663 | **BROKE** | too short for signal one (model 0.25); unsure |
+| EV09 | evasion | both: AI text with a human opening paragraph bolted on | 200 | unsure | 0.605 | 0.704 | 0.455 | **BROKE** | human opening diluted both signals; unsure |
+| EV10 | evasion | signal two: repeated stanza structure | 200 | ai | 0.923 | 0.979 | 0.838 | **HELD** | repetition made it more predictable; caught as AI |
+| FP01 | false_positive | plain, clear human writing with no flourishes | 200 | unsure | 0.592 | 0.618 | 0.554 | **HELD** | not accused (unsure) |
+| FP02 | false_positive | human writing in a formal register | 200 | unsure | 0.740 | 0.739 | 0.861 | **HELD** | unsure, but only because the model floor capped it at 0.74 |
+| FP03 | false_positive | a non-native English speaker writing carefully | 200 | unsure | 0.740 | 0.805 | 0.673 | **HELD** | unsure, capped by the model floor (would be 0.752, AI) |
+| FP04 | false_positive | a student essay written to a rubric | 200 | unsure | 0.740 | 0.833 | 0.627 | **HELD** | unsure, capped by the model floor (would be 0.750) |
+| FP05 | false_positive | technical documentation written by a person | 200 | unsure | 0.740 | 0.800 | 0.970 | **HELD** | unsure, capped by the model floor (would be 0.868, AI) |
+| FP06 | false_positive | a person imitating a formal template | 200 | ai | 0.763 | 0.881 | 0.585 | **BROKE** | human cover letter labelled AI (model 0.88 cleared the floor) |
+| FP07 | false_positive | human writing that repeats a phrase deliberately | 200 | unsure | 0.749 | 0.882 | 0.550 | **HELD** | unsure at 0.749, 0.001 under the AI line |
+| FP08 | false_positive | very short genuine human submission | 400 | — | — | — | — | **HELD** | not accused, but refused with 400 (under 40 chars) |
+| PI01 | prompt_injection | instruction to ignore the check | 200 | unsure | 0.378 | 0.463 | 0.250 | **BROKE** | instruction ignored, but the AI text underneath landed unsure, not AI |
+| PI02 | prompt_injection | instruction disguised as a system message | 200 | human | 0.184 | 0.204 | 0.154 | **BROKE** | got the human label it asked for (0.18): the prefix raised perplexity |
+| PI03 | prompt_injection | instruction wrapped in the writer's voice | 200 | unsure | 0.495 | 0.594 | 0.345 | **BROKE** | AI text underneath landed unsure |
+| PI04 | prompt_injection | attempt to make the label text hostile | 200 | unsure | 0.438 | 0.500 | 0.345 | **HELD** | label text is a fixed constant; the script tag never reaches it |
+| PI05 | prompt_injection | attempt to inject into the audit log | 200 | unsure | 0.464 | 0.640 | 0.201 | **HELD** | log line intact; json.dumps escaped the injected quotes |
+| PI06 | prompt_injection | instruction plus real human text | 200 | unsure | 0.557 | 0.558 | 0.555 | **HELD** | real human text not accused; instruction had no effect |
+| MF01 | malformed | text is only whitespace | 400 | — | — | — | — | **HELD** | rejected with 400 |
+| MF02 | malformed | text is a single character | 400 | — | — | — | — | **HELD** | rejected with 400 |
+| MF03 | malformed | text is control characters | 400 | — | — | — | — | **HELD** | rejected with 400 |
+| MF04 | malformed | text is only punctuation | 400 | — | — | — | — | **HELD** | rejected with 400 |
+| MF05 | malformed | text is a very long single word | 200 | unsure | 0.740 | 0.998 | 0.455 | **BROKE** | junk got a verdict (unsure 0.74) instead of a 400 |
+| MF06 | malformed | text is emoji only | 200 | ai | 0.998 | 0.997 | 1.000 | **BROKE** | emoji-only post labelled AI at 0.998 |
+| MF07 | malformed | text is right-to-left script | 200 | ai | 0.944 | 0.906 | 1.000 | **BROKE** | Arabic text labelled AI at 0.944 |
+| MF08 | malformed | text is 60,000 characters | 400 | — | — | — | — | **HELD** | rejected with 400 |
+| RQ01 | malformed | no text field at all | 400 | — | — | — | — | **HELD** | rejected with 400 |
+| RQ02 | malformed | no creator_id | 400 | — | — | — | — | **HELD** | rejected with 400 |
+| RQ03 | malformed | text is a number | 400 | — | — | — | — | **HELD** | rejected with 400 |
+| RQ04 | malformed | text is a list | 400 | — | — | — | — | **HELD** | rejected with 400 |
+| RQ05 | malformed | text is null | 400 | — | — | — | — | **HELD** | rejected with 400 |
+| RQ06 | malformed | creator_id is an object | 400 | — | — | — | — | **HELD** | rejected with 400 |
+| RQ07 | malformed | body is a JSON array, not an object | 400 | — | — | — | — | **HELD** | rejected with 400 |
+| RQ08 | malformed | body is unparseable JSON | 400 | — | — | — | — | **HELD** | rejected with 400 |
+| RQ09 | malformed | body is empty | 400 | — | — | — | — | **HELD** | rejected with 400 |
+| RQ10 | malformed | body is form-encoded, not JSON | 400 | — | — | — | — | **HELD** | rejected with 400 |
+| RQ11 | malformed | body is JSON claiming to be plain text | 400 | — | — | — | — | **HELD** | rejected with 400 |
+| RQ12 | malformed | deeply nested JSON | 400 | — | — | — | — | **HELD** | rejected with 400 |
+| FL01_01 | flood_same_creator | 20 rapid submissions from one creator | 200 | human | 0.199 | 0.029 | 0.455 | **HELD** | under the limit, served normally |
+| FL01_02 | flood_same_creator | 20 rapid submissions from one creator | 200 | human | 0.199 | 0.029 | 0.455 | **HELD** | under the limit, served normally |
+| FL01_03 | flood_same_creator | 20 rapid submissions from one creator | 200 | human | 0.199 | 0.029 | 0.455 | **HELD** | under the limit, served normally |
+| FL01_04 | flood_same_creator | 20 rapid submissions from one creator | 200 | human | 0.199 | 0.029 | 0.455 | **HELD** | under the limit, served normally |
+| FL01_05 | flood_same_creator | 20 rapid submissions from one creator | 200 | human | 0.199 | 0.029 | 0.455 | **HELD** | under the limit, served normally |
+| FL01_06 | flood_same_creator | 20 rapid submissions from one creator | 200 | human | 0.199 | 0.029 | 0.455 | **HELD** | under the limit, served normally |
+| FL01_07 | flood_same_creator | 20 rapid submissions from one creator | 200 | human | 0.199 | 0.029 | 0.455 | **HELD** | under the limit, served normally |
+| FL01_08 | flood_same_creator | 20 rapid submissions from one creator | 200 | human | 0.199 | 0.029 | 0.455 | **HELD** | under the limit, served normally |
+| FL01_09 | flood_same_creator | 20 rapid submissions from one creator | 200 | human | 0.199 | 0.029 | 0.455 | **HELD** | under the limit, served normally |
+| FL01_10 | flood_same_creator | 20 rapid submissions from one creator | 200 | human | 0.199 | 0.029 | 0.455 | **HELD** | under the limit, served normally |
+| FL01_11 | flood_same_creator | 20 rapid submissions from one creator | 429 | — | — | — | — | **HELD** | rate limited (429), logged |
+| FL01_12 | flood_same_creator | 20 rapid submissions from one creator | 429 | — | — | — | — | **HELD** | rate limited (429), logged |
+| `evasion` | 10 | 0 | None | — | — | — | — | **?** |  |
+| `false_positive` | 8 | 0 | None | — | — | — | — | **?** |  |
+| `flood_same_creator` | 12 | 0 | None | — | — | — | — | **?** |  |
+| `malformed` | 20 | 0 | None | — | — | — | — | **?** |  |
+| `prompt_injection` | 6 | 0 | None | — | — | — | — | **?** |  |
 
 **Ten audit log entries from the run**
 
-<!-- Choose entries that show the interesting failures, not the ten easiest. -->
+From `logs/audit.jsonl`. These are the interesting failures plus one route rejection and one rate-limit rejection:
 
 ```json
-
+{"timestamp": "2026-11-18T03:41:33+00:00", "content_id": "48535a7efe52", "creator_id": "attacker_MF07", "guess": "ai", "model_score": 0.9064, "style_score": 1.0, "combined_score": 0.9438, "label": "This piece reads a lot like text generated by an AI tool. That's an automated guess, not a verdict, and it can be wrong. If you wrote this yourself, you can ask for a person to review it.", "status": "decided", "text_length": 105}
+{"timestamp": "2026-11-18T03:41:31+00:00", "content_id": "c0311b5418c6", "creator_id": "attacker_FP06", "guess": "ai", "model_score": 0.8814, "style_score": 0.5852, "combined_score": 0.7629, "label": "This piece reads a lot like text generated by an AI tool. That's an automated guess, not a verdict, and it can be wrong. If you wrote this yourself, you can ask for a person to review it.", "status": "decided", "text_length": 353}
+{"timestamp": "2026-11-18T03:41:33+00:00", "content_id": "97139eb6400a", "creator_id": "attacker_MF06", "guess": "ai", "model_score": 0.9969, "style_score": 1.0, "combined_score": 0.9981, "label": "This piece reads a lot like text generated by an AI tool. That's an automated guess, not a verdict, and it can be wrong. If you wrote this yourself, you can ask for a person to review it.", "status": "decided", "text_length": 200}
+{"timestamp": "2026-11-18T03:41:31+00:00", "content_id": "88f4bdf6cf01", "creator_id": "attacker_PI02", "guess": "human", "model_score": 0.2044, "style_score": 0.1543, "combined_score": 0.1844, "label": "We think this was written by a person.", "status": "decided", "text_length": 322}
+{"timestamp": "2026-11-18T03:41:30+00:00", "content_id": "1a7162d8805a", "creator_id": "attacker_EV05", "guess": "human", "model_score": 0.3212, "style_score": 0.21, "combined_score": 0.2767, "label": "We think this was written by a person.", "status": "decided", "text_length": 460}
+{"timestamp": "2026-11-18T03:41:27+00:00", "content_id": "2d5c0d3ead14", "creator_id": "attacker_EV01", "guess": "unsure", "model_score": 0.1635, "style_score": 0.7, "combined_score": 0.3781, "label": "We couldn't tell whether this was written by a person or with an AI tool. That happens with lots of genuine writing, so we're not making any claim about it either way.", "status": "decided", "text_length": 657}
+{"timestamp": "2026-11-18T03:41:31+00:00", "content_id": "0462337c0fa8", "creator_id": "attacker_FP03", "guess": "unsure", "model_score": 0.8051, "style_score": 0.6732, "combined_score": 0.74, "label": "We couldn't tell whether this was written by a person or with an AI tool. That happens with lots of genuine writing, so we're not making any claim about it either way.", "status": "decided", "text_length": 418}
+{"timestamp": "2026-11-18T03:41:32+00:00", "content_id": "e3ad9fcb3a3b", "creator_id": "attacker_PI05", "guess": "unsure", "model_score": 0.6401, "style_score": 0.2009, "combined_score": 0.4644, "label": "We couldn't tell whether this was written by a person or with an AI tool. That happens with lots of genuine writing, so we're not making any claim about it either way.", "status": "decided", "text_length": 213}
+{"timestamp": "2026-11-18T03:41:33+00:00", "creator_id": "attacker_MF08", "event": "rejected", "status": "rejected", "reason": "text_too_long", "text_length": 57639}
+{"timestamp": "2026-11-18T03:41:33+00:00", "creator_id": "attacker_flood", "event": "rejected", "status": "rejected", "reason": "rate_limited", "limit": "10 per 1 minute"}
 ```
 
-**The single worst outcome** — the one I'd least want to explain to a writer
-whose work got caught by it:
+In order: Arabic text accused (MF07); a human cover letter accused (FP06); emoji accused (MF06); an injection prefix that got the human label (PI02); a heavy human edit of AI text passing as human (EV05); typos collapsing signal one (EV01); a non-native writer saved only by the model floor (FP03); the log-injection attempt sitting harmlessly escaped in its own line (PI05); a 60,000-character body refused with 400 (MF08); and a flood row rejected with 429.
 
-
+**The single worst outcome:** **MF07.** A short paragraph of ordinary Arabic was labelled *high-confidence AI* at 0.944. Nothing about the writing caused that: my style signal only counts Latin letters (`[a-z0-9']`), so it found zero words, scored the text as having no vocabulary and no punctuation, and returned 1.0. GPT-2, which barely knows Arabic, also scored it as predictable (0.91). Every writer who doesn't write in English would be told their work looks AI-generated. That isn't a borderline call I could defend to them; it's the system not being able to read their language at all.
 
 ---
 
