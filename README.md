@@ -225,25 +225,27 @@ I used Claude for most of the implementation and for drafting my criteria.
 
 ## Rate Limiting
 
-**My limits:** ___ per minute, ___ per day
+**My limits:** 10 per minute, 100 per day (set in `config.py`, applied with `@limiter.limit(...)` on `app.py::submit`)
 
-**Why those numbers and not others:**
-<!-- Think about two people: a real writer submitting their own work a few
-     times an hour, and a script sending a thousand variations to map your
-     thresholds. Your numbers have to be liveable for the first and hostile to
-     the second. -->
+**Why those numbers and not others:** A real writer submits a few pieces an hour, perhaps resubmitting a couple of times after edits. Ten a minute never gets in their way, even if they paste several drafts in quick succession. A script trying to map my thresholds by sending 1,000 small variations of one text would be capped at 100 a day, so it needs ten days per `creator_id` instead of a few minutes. I didn't go lower (say 3 a minute) because a writer fixing typos and resubmitting would hit it. I didn't go higher on the daily cap because nobody genuinely needs 100+ verdicts a day on their own writing.
 
-**What a caller counts as:** <!-- per address, or per creator_id? They fail
-differently — one script can look like a thousand callers, and one household
-can look like one. -->
+**What a caller counts as:** The `creator_id` in the request body, falling back to the caller's IP address when there's no usable `creator_id` (`app.py::rate_limit_key`). Per-creator means a household or office sharing one IP doesn't share one limit. The weakness is the opposite: an attacker can rotate through made-up `creator_id`s and look like a thousand different writers. Real per-creator limits need `creator_id` to be an authenticated account, not a free-text field.
 
 **The run of status codes when I pushed past it:**
 
-<!-- python run_attacks.py --flood 15 -->
+`python run_attacks.py --flood 15`, from `results/flood_2026-11-17_2135.md`:
 
 ```
-
+200 200 200 200 200 200 200 200 200 200 429 429 429 429 429
 ```
+
+Each `429` is also written to the audit log by the starter's 429 handler:
+
+```json
+{"timestamp": "2026-11-18T03:35:41+00:00", "creator_id": "flood_tester", "event": "rejected", "status": "rejected", "reason": "rate_limited", "limit": "10 per 1 minute"}
+```
+
+**The log:** every decision records all nine fields: `timestamp`, `content_id`, `creator_id`, `guess`, `model_score`, `style_score`, `combined_score`, `label`, `status`. Requests my own route refuses (missing, empty, too short or too long text, missing `creator_id`, non-object JSON) are logged as `rejected` with a reason, through `audit.log_rejection` in `app.py::_reject`.
 
 ---
 
