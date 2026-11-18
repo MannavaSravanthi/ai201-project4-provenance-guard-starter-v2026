@@ -353,40 +353,157 @@ In order: Arabic text accused (MF07); a human cover letter accused (FP06); emoji
 
 ## Run Log and Verdicts
 
-<!-- Your five criteria across three trials. `run_eval.py --label before`. -->
+`python run_eval.py --label before` (criteria 1, 2, 3, 5), giving `results/run_2026-11-17_2211_before.md`. Then `python appeal_eval.py --label before` (criterion 4 and the non-object bodies of criterion 5), giving `results/appeal_run_2026-11-17_2212_before.md`. The scenarios are in `scenarios.py`. `run_eval.py` can't send appeals, so I wrote `appeal_eval.py` to submit, appeal and read the log back.
 
 | Criterion | Target | Run 1 | Run 2 | Run 3 | Verdict |
 |---|---|---|---|---|---|
-| 1.  |  |  |  |  |  |
-| 2.  |  |  |  |  |  |
-| 3.  |  |  |  |  |  |
-| 4.  |  |  |  |  |  |
-| 5.  |  |  |  |  |  |
+| 1. Human writing rarely called AI | ≤ 1 of 10 labelled AI | 0/10 | 0/10 | 0/10 | **MET** |
+| 2. Clearly-AI vs clearly-human spread | AI avg − human avg ≥ 0.30 | 0.548 | 0.548 | 0.548 | **MET** |
+| 3. All three labels reachable | each label ≥ 2 of 15 | AI 3 · unsure 9 · human 3 | AI 3 · unsure 9 · human 3 | AI 3 · unsure 9 · human 3 | **MET** |
+| 4. Every appeal recorded and changes status | 5/5 appeals OK and unknown id → 404 | 5/5 · 404 | 5/5 · 404 | 5/5 · 404 | **MET** |
+| 5. Bad input → 400, never a crash | 9/9 bad requests → 400, `/ping` still up | 9/9 | 9/9 | **7/9** (two came back 429) | **MISSED** |
 
-**Real output from one trial**, pasted as text, naming the file and function
-that produced it:
+All three trials gave identical scores. Neither signal has any randomness in it, so that's expected.
+
+**How I decided each verdict:**
+1. Of my 10 human pieces, the highest score was 0.553 (piece 10). None reached the AI band in any trial.
+2. Clearly-AI average was 0.823 (0.926, 0.740, 0.875, 0.827, 0.748) and clearly-human average was 0.275 (0.360, 0.101, 0.315, 0.369, 0.230). The gap is 0.548 in every trial.
+3. All three labels appeared at least twice in every trial. All 5 borderline texts landed in unsure, and 2 of the 5 "clearly AI" texts also landed in unsure (capped at 0.74 by the model floor).
+4. Every appeal returned `under_review`, the log held exactly one original decision followed by the appeal, and the made-up id returned 404 in all three trials.
+5. Trials 1 and 2 were 9/9. In trial 3, two of the non-object bodies came back **429, not 400**. The target was 400 in 3 out of 3 attempts, so this is a miss, even though nothing crashed and `/ping` stayed up.
+
+**Real output from one trial** (trial 1).
+
+Criterion 1, `run_eval.py::main`, the first three of ten:
 
 ```json
+[
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.4995,
+    "model_score": 0.6647,
+    "style_score": 0.2517,
+    "sent": "Good morning,\nThis is a reminder that you have not submitted your time"
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.36,
+    "model_score": 0.5117,
+    "style_score": 0.0132,
+    "sent": "Hello Maria!\n\nI was wondering if we can get our own renter's insurance"
+  },
+  {
+    "status": 200,
+    "guess": "human",
+    "confidence": 0.1009,
+    "model_score": 0.104,
+    "style_score": 0.0963,
+    "sent": "Though the government service providers play their role\nperfectly in t"
+  }
+]
+```
 
+Criterion 3, `run_eval.py::main`, label counts across the 15 texts: `{'ai': 3, 'unsure': 9, 'human': 3}`.
+
+Criterion 4, `appeal_eval.py::one_trial`, the first appeal:
+
+```json
+{
+  "check": "appeal 1",
+  "content_id": "a10be89d65e6",
+  "appeal_status_code": 200,
+  "appeal_response": {
+    "content_id": "a10be89d65e6",
+    "message": "Thanks — your appeal is recorded. A person will review this piece, and the label won't be held against you in the meantime.",
+    "original_guess": "unsure",
+    "status": "under_review"
+  },
+  "log_entries_for_id": 2,
+  "original_decision_unchanged": true,
+  "pass": true
+}
+```
+
+Criterion 5, `run_eval.py::main`, the first three bad bodies:
+
+```json
+[
+  {
+    "status": 400,
+    "guess": null,
+    "confidence": null,
+    "model_score": null,
+    "style_score": null,
+    "label": null,
+    "sent": "{\"creator_id\": \"eval_bad_missing\"}"
+  },
+  {
+    "status": 400,
+    "guess": null,
+    "confidence": null,
+    "model_score": null,
+    "style_score": null,
+    "label": null,
+    "sent": "(empty text)"
+  },
+  {
+    "status": 400,
+    "guess": null,
+    "confidence": null,
+    "model_score": null,
+    "style_score": null,
+    "label": null,
+    "sent": "   \n\t  "
+  }
+]
+```
+
+Criterion 5, `appeal_eval.py::one_trial`, **trial 3**, the two that missed:
+
+```json
+[
+  {
+    "check": "bad body: body is a JSON string",
+    "status_code": 429,
+    "response": {
+      "error": "rate_limited",
+      "limit": "10 per 1 minute",
+      "message": "Too many submissions. Try again shortly."
+    },
+    "pass": false
+  },
+  {
+    "check": "bad body: body is unparseable",
+    "status_code": 429,
+    "response": {
+      "error": "rate_limited",
+      "limit": "10 per 1 minute",
+      "message": "Too many submissions. Try again shortly."
+    },
+    "pass": false
+  }
+]
 ```
 
 **Diagnoses**
 
-<!-- For each miss AND each broken attack: the stage and the mechanism.
+*Criterion 5 (missed).* **Stage: the route, specifically the rate limiter in front of it.** **Mechanism:** a request with no usable `creator_id` (a JSON array, a bare string, unparseable JSON) can't be keyed by creator, so `app.py::rate_limit_key` falls back to the caller's IP address. Every such request in the whole eval came from my laptop's one address. By trial 3, the earlier trials' bad bodies plus `run_eval.py`'s no-`creator_id` body had used up the 10-a-minute allowance for that address. Flask-Limiter runs *before* my handler, so those requests were refused with 429 before my validation could return 400. Nothing crashed, and both refusals are in the audit log. But a caller sending a bad request got "slow down" instead of "your request is malformed", which is the wrong answer.
 
-     Your service has five stages: the route, signal one, signal two, the
-     combining rule, and the label mapping.
+*Attack set: 16 broken, falling into four patterns.*
 
-     Not a diagnosis:  "The evasion attacks got through."
-     A diagnosis:      "Four evasion inputs got through. All four had typos
-                        added to AI-generated text. My second signal measures
-                        word variety, and typos raise word variety — so it read
-                        them as more human. My combining rule weights that
-                        signal at 0.6, so it dragged the whole score down."
+1. **Text my style signal can't read gets scored as maximally AI (MF06, MF07, MF05).** **Stage: signal two, and the route for letting it through.** `stylometry.words()` only matches `[a-z0-9']`. Arabic and emoji contain zero matches, so there are no sentences of words, a type-token ratio of 0 and no punctuation it recognises, and every measure ramps to "AI". The result is `style_score = 1.0`. GPT-2 also finds repetitive or out-of-vocabulary byte sequences predictable (0.91–0.997). Both signals point the same way, so neither the disagreement rule nor the model floor applies, and the combined score clears 0.75. MF05 (one 400-character word) got the same treatment, only clamped to unsure by the disagreement rule. **This is the worst failure: a non-English writer is told their work looks AI-generated.**
 
-     Look for a pattern. Five failures on one signal is one problem, not five. -->
+2. **Evasion lands in "unsure" because the AI band is deliberately hard to reach (EV01–EV04, EV06–EV09, PI01, PI03).** **Stage: the combining rule.** **Mechanism:** an AI label needs `combined > 0.75` *and* `model_score ≥ 0.85`. Any edit that knocks the model score below 0.85 or pulls the style score down lands in unsure: unusual words (EV04, model 0.61), typos (EV01), a short text (EV08), a bolted-on human opening (EV09, model 0.70), or chopped-up and punctuation-padded sentences (EV02, EV06, EV07, style 0.02–0.25). This is the cost of the model floor I added in unit 7 to protect human writers. The same floor is why FP02–FP05 held, so it's a trade I chose, not an accident.
 
+3. **Odd tokens raise perplexity, and signal one reads that as human (EV01, PI02, EV05).** **Stage: signal one.** **Mechanism:** perplexity goes up for anything GPT-2 didn't expect, not only for human choices. Typos took EV01 to `model_score` 0.16. PI02's injected line (all-caps "SYSTEM:", `guess=human`, `confidence=0.02`) took AI text to 0.20, which earned the **human** label (0.18). The instruction itself was never *obeyed*, since nothing in my pipeline reads text as commands. It just looked statistically strange. EV05 is a real human edit of AI text, so labelling it human is arguably correct.
 
+4. **Formulaic human writing clears the model floor (FP06).** **Stage: signal one.** **Mechanism:** a stock cover letter ("Dear Sir or Madam, I am writing to enquire...") is as predictable to GPT-2 as AI text (model 0.88, above the 0.85 floor). The style signal was only middling (0.59), so the 0.6/0.4 average reached 0.763, just over 0.75. FP07 (0.749) and FP02–FP05 (capped at 0.74) were within 0.01 of the same outcome.
+
+**Patterns:** patterns 3 and 4 are the same blind spot of signal one seen from opposite sides: predictable means AI, surprising means human, regardless of who wrote it. Pattern 1 is a separate, more serious hole: the system scores text it can't read rather than refusing it.
+
+**Were my targets too low?** Criteria 1–4 were all met, and criterion 1 was met comfortably (0/10). But the attack set's own false-positive family got one accusation through and nearly five more, so my 10 pieces were easier than real plain writing can be. If I tightened anything, it would be criterion 1: at least 5 of the 10 pieces should be template-style formal writing, the kind FP06 shows can break it.
 
 ---
 
