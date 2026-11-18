@@ -72,6 +72,14 @@ MODEL_FLOOR_FOR_AI = 0.85
 MIN_TEXT_CHARS = 40
 MAX_TEXT_CHARS = 20000
 
+# UNIT 8 IMPROVEMENT. Both signals only understand English: the style signal
+# counts Latin-letter words, GPT-2 was trained on English. Text they can't read
+# used to get scored anyway, and came out as "AI". Now it's refused.
+#   - at least MIN_ENGLISH_WORDS words made of a-z letters, and
+#   - those words make up at least MIN_LATIN_SHARE of the text's letters.
+MIN_ENGLISH_WORDS = 8
+MIN_LATIN_SHARE = 0.5
+
 
 # ─── Thresholds (Milestone 5) ────────────────────────────────────────────────
 # Where one label becomes another. Scores run 0.0 (confidently human) to 1.0

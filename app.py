@@ -188,6 +188,14 @@ def submit():
                        f"Please submit at most {config.MAX_TEXT_CHARS} characters.",
                        text_length=len(text))
 
+    # Unit 8 improvement: refuse text the signals can't read instead of scoring it.
+    if not _readable_english(text):
+        return _reject(creator_id, "unsupported_text",
+                       "We can only check writing in English right now, and this "
+                       f"needs at least {config.MIN_ENGLISH_WORDS} words. Nothing "
+                       "has been decided about your text.",
+                       text_length=len(text))
+
     try:
         model_score = detector.model_signal(text)
     except ValueError as exc:      # detector says the text is too short to score
@@ -220,6 +228,19 @@ def submit():
         "style_score": style_score,
         "status": "decided",
     })
+
+
+def _readable_english(text: str) -> bool:
+    """
+    True if the text has enough Latin-script words for both signals to mean
+    anything. Arabic, emoji, or one 400-character "word" fail this.
+    """
+    latin_words = [w for w in stylometry.words(text) if any(c.isalpha() for c in w)]
+    if len(latin_words) < config.MIN_ENGLISH_WORDS:
+        return False
+    letters = [c for c in text if c.isalpha()]
+    latin = [c for c in letters if c.isascii()]
+    return bool(letters) and len(latin) / len(letters) >= config.MIN_LATIN_SHARE
 
 
 def _reject(creator_id, reason, message, **extra):
